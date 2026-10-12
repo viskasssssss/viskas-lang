@@ -1,25 +1,21 @@
 use chumsky::{
-    IterParser, Parser,
+    error::Rich,
     primitive::{end, just},
     recursive::recursive,
-    select,
-    error::Rich,
+    select, IterParser, Parser,
 };
 
-use crate::lexer::Token;
+use crate::{
+    lexer::Token,
+    value::Type,
+};
 
 #[derive(Debug)]
 pub enum Expr {
-    // Integer literal.
     Int(isize),
-
-    // Floating point literal.
     Float(f64),
-
-    // Unary minus.
+    Variable(String),
     Neg(Box<Expr>),
-
-    // Binary operators.
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
@@ -27,11 +23,24 @@ pub enum Expr {
     Pow(Box<Expr>, Box<Expr>),
 }
 
-pub fn parser<'src>(
-) -> impl Parser<'src, &'src [Token], Expr, chumsky::extra::Err<Rich<'src, Token>>>
-{
-    let expression = recursive(|p| {
-        
+#[derive(Debug)]
+pub enum Statement {
+    Let {
+        name: String,
+        mutable: bool,
+        annotation: Option<Type>,
+        value: Expr,
+    },
+    Assign {
+        name: String,
+        value: Expr,
+    },
+    Expr(Expr),
+}
+
+fn expression_parser<'src>(
+) -> impl Parser<'src, &'src [Token], Expr, chumsky::extra::Err<Rich<'src, Token>>> {
+    recursive(|p| {
         let atom = {
             let parenthesized = p
                 .clone()
@@ -48,14 +57,18 @@ pub fn parser<'src>(
                 Token::Integer(n) => Expr::Int(n),
             };
 
+            let variable = select! {
+                Token::Identifier(name) => Expr::Variable(name.clone()),
+            };
+
             let literal = float
                 .or(integer)
+                .or(variable)
                 .labelled("an expression");
 
             parenthesized.or(literal)
         };
 
-        
         let unary = recursive(|unary| {
             let power = atom
                 .clone()
@@ -72,7 +85,7 @@ pub fn parser<'src>(
             just(Token::Plus)
                 .or(just(Token::Minus))
                 .repeated()
-                .foldr(power, |_op, rhs| match _op {
+                .foldr(power, |op, rhs| match op {
                     Token::Plus => rhs,
                     Token::Minus => Expr::Neg(Box::new(rhs)),
                     _ => unreachable!(),
@@ -91,7 +104,7 @@ pub fn parser<'src>(
             },
         );
 
-        let binary_2 = binary_1.clone().foldl(
+        binary_1.clone().foldl(
             just(Token::Plus)
                 .or(just(Token::Minus))
                 .then(binary_1)
@@ -101,10 +114,70 @@ pub fn parser<'src>(
                 Token::Minus => Expr::Sub(Box::new(lhs), Box::new(rhs)),
                 _ => unreachable!(),
             },
-        );
+        )
+    })
+}
 
-        binary_2
-    });
+/// Parses declarations, assignments, and expression statements.
+/// Multiple statements can be separated by semicolons.
+pub fn statement_parser<'src>(
+) -> impl Parser<
+    'src,
+    &'src [Token],
+    Vec<Statement>,
+    chumsky::extra::Err<Rich<'src, Token>>,
+> {
+    let identifier = select! {
+        Token::Identifier(name) => name.clone(),
+    };
 
-    expression.then_ignore(end())
+    let type_annotation = select! {
+        Token::I32 => Type::I32,
+        Token::F64 => Type::F64,
+    };
+
+    let inferred_declaration = just(Token::Let)
+        .ignore_then(just(Token::Mut).or_not())
+        .then(identifier.clone())
+        .then_ignore(just(Token::InferAssign))
+        .then(expression_parser())
+        .map(|((mutable, name), value)| Statement::Let {
+            name,
+            mutable: mutable.is_some(),
+            annotation: None,
+            value,
+        });
+
+    let explicit_declaration = just(Token::Let)
+        .ignore_then(just(Token::Mut).or_not())
+        .then(identifier.clone())
+        .then_ignore(just(Token::Colon))
+        .then(type_annotation)
+        .then_ignore(just(Token::Assign))
+        .then(expression_parser())
+        .map(|(((mutable, name), annotation), value)| Statement::Let {
+            name,
+            mutable: mutable.is_some(),
+            annotation: Some(annotation),
+            value,
+        });
+
+    let assignment = identifier
+        .then_ignore(just(Token::Assign))
+        .then(expression_parser())
+        .map(|(name, value)| Statement::Assign { name, value });
+
+    let expression_statement =
+        expression_parser().map(Statement::Expr);
+
+    let statement = inferred_declaration
+        .or(explicit_declaration)
+        .or(assignment)
+        .or(expression_statement);
+
+    statement
+        .separated_by(just(Token::Semicolon))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .then_ignore(end())
 }

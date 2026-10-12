@@ -8,6 +8,30 @@ use crate::lexer::{LexError, SpannedToken, Token};
 
 const FILE_NAME: &str = "input.vis";
 
+fn describe_token(token: &crate::lexer::Token) -> String {
+    use crate::lexer::Token::*;
+
+    match token {
+        Let => "`let`".into(),
+        Mut => "`mut`".into(),
+        I32 => "`i32`".into(),
+        F64 => "`f64`".into(),
+        InferAssign => "`:=`".into(),
+        Colon => "`:`".into(),
+        Assign => "`=`".into(),
+        Semicolon => "`;`".into(),
+        Plus => "`+`".into(),
+        Minus => "`-`".into(),
+        Multiply => "`*`".into(),
+        Divide => "`/`".into(),
+        Power => "`^`".into(),
+        LParen => "`(`".into(),
+        RParen => "`)`".into(),
+        Integer(n) => format!("`{n}`"),
+        Float(n) => format!("`{n}`"),
+        Identifier(name) => format!("{name:?}"),
+    }
+}
 
 fn render(
     source: &str,
@@ -60,7 +84,7 @@ pub fn render_parse_error(
         token_range_to_source(&token_range, tokens, source.len());
 
     let found = match error.found() {
-        Some(token) => format!("{token:?}"),
+        Some(token) => describe_token(&token),
         None => "end of input".to_owned(),
     };
 

@@ -1,6 +1,8 @@
 mod diagnostics;
 mod lexer;
 mod parser;
+mod value;
+mod type_checker;
 mod evaluator;
 
 use std::io::{self, Write};
@@ -10,6 +12,10 @@ use chumsky::Parser;
 fn main() {
     println!("Welcome! Enter 'exit' to exit.");
 
+    // Keep both environments alive for the entire REPL session.
+    let mut checker = type_checker::TypeChecker::new();
+    let mut runtime = evaluator::RuntimeEnv::new();
+
     loop {
         print!("> ");
         if let Err(e) = io::stdout().flush() {
@@ -18,6 +24,7 @@ fn main() {
         }
 
         let mut input = String::new();
+
         match io::stdin().read_line(&mut input) {
             Ok(_) => {
                 let command = input.trim();
@@ -31,7 +38,7 @@ fn main() {
                     continue;
                 }
 
-                execute(command);
+                execute(command, &mut checker, &mut runtime);
             }
             Err(error) => {
                 eprintln!("Input read error: {error}");
@@ -41,8 +48,11 @@ fn main() {
     }
 }
 
-
-fn execute(source: &str) {
+fn execute(
+    source: &str,
+    checker: &mut type_checker::TypeChecker,
+    runtime: &mut evaluator::RuntimeEnv,
+) {
     let tokens = match lexer::lex(source) {
         Ok(tokens) => tokens,
         Err(error) => {
@@ -51,21 +61,17 @@ fn execute(source: &str) {
         }
     };
 
-    for token in &tokens {
-        println!("{:?}", token);
-    }
-
     // Keep the original spanned tokens for diagnostics.
     let plain_tokens: Vec<lexer::Token> =
         tokens.iter().map(|token| token.kind.clone()).collect();
 
-    let ast = match parser::parser()
+    let statements = match parser::statement_parser()
         .parse(&plain_tokens)
         .into_result()
     {
-        Ok(expr) => {
-            println!("[AST]\n{:#?}", expr);
-            expr
+        Ok(statements) => {
+            //println!("[AST]\n{:#?}", statements);
+            statements
         }
         Err(errors) => {
             for error in &errors {
@@ -79,5 +85,32 @@ fn execute(source: &str) {
         }
     };
 
-    println!("\n[result]\n{}", evaluator::eval(&ast));
+    // Check a copy first so failed checks don't modify persistent state.
+    let mut candidate_checker = checker.clone();
+
+    if let Err(error) = candidate_checker.check_program(&statements) {
+        eprintln!("Type error: {error}");
+        return;
+    }
+
+    // Execute against a copy so runtime errors don't commit partial changes.
+    let mut candidate_runtime = runtime.clone();
+
+    match evaluator::execute_program(
+        &statements,
+        &mut candidate_runtime,
+    ) {
+        Ok(result) => {
+            // Commit both environments only after successful execution.
+            *checker = candidate_checker;
+            *runtime = candidate_runtime;
+
+            if let Some(value) = result {
+                println!("{value}");
+            }
+        }
+        Err(error) => {
+            eprintln!("Runtime error: {error}");
+        }
+    }
 }

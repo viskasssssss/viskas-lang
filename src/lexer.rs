@@ -1,12 +1,37 @@
-
 use logos::Logos;
 use std::ops::Range;
-
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n]+")]
 #[logos(error = String)]
 pub enum Token {
+    // Keywords and types.
+    #[token("let")]
+    Let,
+
+    #[token("mut")]
+    Mut,
+
+    #[token("i32")]
+    I32,
+
+    #[token("f64")]
+    F64,
+
+    // Declaration and assignment operators.
+    #[token(":=")]
+    InferAssign,
+
+    #[token(":")]
+    Colon,
+
+    #[token("=")]
+    Assign,
+
+    #[token(";")]
+    Semicolon,
+
+    // Arithmetic operators.
     #[token("+")]
     Plus,
 
@@ -28,14 +53,17 @@ pub enum Token {
     #[token(")")]
     RParen,
 
-    // Match decimal numbers before integers.
+    // Numeric literals.
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse::<f64>().unwrap())]
     Float(f64),
 
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<isize>().unwrap())]
     Integer(isize),
-}
 
+    // Variable names.
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_owned())]
+    Identifier(String),
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpannedToken {
